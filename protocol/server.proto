@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+message WelcomeMessage {
+  uint32 id = 1;
+}
+
+message SubscribeRequest {
+  string topic = 1;
+}
+
+message PublishRequest {
+  repeated string topics = 1;
+  bytes payload = 2;
+}
+
+message UnsubscribeRequest {
+  string topic = 1;
+}
+
+message TopicMessage {
+  string topic = 1;
+  uint32 sender = 2;
+  bytes body = 3;
+}
+
+message ServerMessage {
+  oneof message {
+    WelcomeMessage welcome = 1;
+    TopicMessage topic_message = 2;
+  }
+}
+
+message ClientMessage {
+  oneof message {
+    SubscribeRequest subscribe_request = 1;
+    PublishRequest publish_request = 2;
+    UnsubscribeRequest unsubscribe_request = 3;
+  }
+}
