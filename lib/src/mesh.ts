@@ -1,59 +1,33 @@
 import { ServerConnection } from './serverConnection'
-import { ILogger, PeerId } from './types'
+import { ILogger, PeerId, PEER_CONNECT_TIMEOUT } from './types'
 import { encode, decode } from './utils'
-
-export const defaultIceServers = [{ urls: 'stun:stun.l.google.com:19302' }]
 
 const DEBUG = false
 const DEBUG_ICE_CANDIDATES = false
 
-type Config = {
-  logger: ILogger
-  packetHandler: (data: Uint8Array, reliable: boolean) => void
-  shouldAcceptOffer(peerId: PeerId): boolean
-  onConnectionEstablished: (peerId: PeerId, connectionId: number) => void
-  onConnectionClosed: (peerId: PeerId, connectionId: number) => void
-}
+type PacketHandler = (data: Uint8Array, reliable: boolean) => void
+type OnConnectionChanged = (peerId: PeerId, change: 'established' | 'closed') => void
 
 type Connection = {
-  id: number
   instance: RTCPeerConnection
   createTimestamp: number
   dc?: RTCDataChannel
 }
 
-const PEER_CONNECT_TIMEOUT = 3500
-
 export class Mesh {
-  private index = 0
-
   private disposed = false
-  private logger: ILogger
-  private packetHandler: (data: Uint8Array, reliable: boolean) => void
-  private shouldAcceptOffer: (peerId: PeerId) => boolean
-  private onConnectionEstablished: (peerId: PeerId, connectionId: number) => void
-  private onConnectionClosed: (peerId: PeerId, connectionId: number) => void
   public initiatedConnections = new Map<PeerId, Connection>()
   public receivedConnections = new Map<PeerId, Connection>()
 
-  private listeners: { close(): void }[] = []
-
   constructor(
+    private logger: ILogger,
     private conn: ServerConnection,
     private peerId: PeerId,
-    { logger, packetHandler, shouldAcceptOffer, onConnectionClosed, onConnectionEstablished }: Config
-  ) {
-    this.logger = logger
-    this.packetHandler = packetHandler
-    this.shouldAcceptOffer = shouldAcceptOffer
-    this.onConnectionClosed = onConnectionClosed
-    this.onConnectionEstablished = onConnectionEstablished
-
-    // TODO: close subscriptions upon disconnection
-    this.conn.subscribe(`${this.peerId}.candidate`, this.onCandidateMessage.bind(this))
-    this.conn.subscribe(`${this.peerId}.offer`, this.onOfferMessage.bind(this))
-    this.conn.subscribe(`${this.peerId}.answer`, this.onAnswerListener.bind(this))
-  }
+    private packetHandler: PacketHandler,
+    private onConnectionChanged: OnConnectionChanged,
+    private iceServers: RTCIceServer[],
+    private maxConnections: number
+  ) {}
 
   public async connectTo(peerId: PeerId, reason: string): Promise<void> {
     if (this.initiatedConnections.has(peerId) || this.receivedConnections.has(peerId)) {
@@ -63,7 +37,7 @@ export class Mesh {
     this.debugWebRtc(`Connecting to ${peerId}. ${reason}`)
 
     const instance = this.createConnection(peerId, this.peerId)
-    const conn: Connection = { instance, createTimestamp: Date.now(), id: this.index++ }
+    const conn: Connection = { instance, createTimestamp: Date.now() }
     this.initiatedConnections.set(peerId, conn)
     instance.addEventListener('connectionstatechange', (_) => {
       switch (instance.connectionState) {
@@ -77,7 +51,7 @@ export class Mesh {
           this.initiatedConnections.delete(peerId)
 
           if (!this.isConnectedTo(peerId)) {
-            this.onConnectionClosed(peerId, conn.id)
+            this.onConnectionChanged(peerId, 'closed')
           }
 
           break
@@ -88,7 +62,7 @@ export class Mesh {
 
     this.debugWebRtc(`Opening dc for ${peerId}`)
     const dc = instance.createDataChannel('data')
-    this.registerDc(conn, dc, peerId, true)
+    this.registerDc(conn, dc, peerId)
     const offer = await instance.createOffer({
       offerToReceiveAudio: true,
       offerToReceiveVideo: false
@@ -192,14 +166,14 @@ export class Mesh {
       const state = conn.instance.connectionState
 
       if (state !== 'connected' && Date.now() - conn.createTimestamp > PEER_CONNECT_TIMEOUT) {
-        // this.logger.log(`The connection ->${peerId} is not in a sane state ${state}. Discarding it.`)
+        this.logger.log(`The connection ->${peerId} is not in a sane state ${state}. Discarding it.`)
         conn.instance.close()
       }
     })
     this.receivedConnections.forEach((conn: Connection, peerId: PeerId) => {
       const state = conn.instance.connectionState
       if (state !== 'connected' && Date.now() - conn.createTimestamp > PEER_CONNECT_TIMEOUT) {
-        // this.logger.log(`The connection <-${peerId} is not in a sane state ${state}. Discarding it.`)
+        this.logger.log(`The connection <-${peerId} is not in a sane state ${state}. Discarding it.`)
         conn.instance.close()
       }
     })
@@ -223,10 +197,6 @@ export class Mesh {
     if (this.disposed) return
     this.disposed = true
 
-    for (const listener of this.listeners) {
-      listener.close()
-    }
-
     this.initiatedConnections.forEach(({ instance }: Connection) => {
       instance.close()
     })
@@ -240,7 +210,7 @@ export class Mesh {
 
   private createConnection(peerId: PeerId, initiator: PeerId) {
     const instance = new RTCPeerConnection({
-      iceServers: defaultIceServers
+      iceServers: this.iceServers
     })
 
     instance.addEventListener('icecandidate', async (event) => {
@@ -260,7 +230,7 @@ export class Mesh {
     return instance
   }
 
-  private async onCandidateMessage(sender: PeerId, body: Uint8Array) {
+  async onCandidateMessage(sender: PeerId, body: Uint8Array) {
     if (this.disposed) return
 
     if (DEBUG_ICE_CANDIDATES) {
@@ -296,9 +266,13 @@ export class Mesh {
     }
   }
 
-  private async onOfferMessage(peerId: PeerId, body: Uint8Array) {
+  async onOfferMessage(peerId: PeerId, body: Uint8Array) {
     if (this.disposed) return
-    if (!this.shouldAcceptOffer(peerId)) {
+
+    if (this.connectionsCount() >= this.maxConnections) {
+      if (DEBUG) {
+        this.logger.log('Rejecting offer, already enough connections')
+      }
       return
     }
 
@@ -306,7 +280,7 @@ export class Mesh {
 
     const offer = JSON.parse(decode(body))
     const instance = this.createConnection(peerId, peerId)
-    const conn: Connection = { instance, createTimestamp: Date.now(), id: this.index++ }
+    const conn: Connection = { instance, createTimestamp: Date.now() }
     this.receivedConnections.set(peerId, conn)
 
     instance.addEventListener('connectionstatechange', () => {
@@ -321,7 +295,7 @@ export class Mesh {
           // NOTE: I think this is not really need, but during our stress test using wertc, the dc.close was not always been called, so this is a workaround for that.
           this.receivedConnections.delete(peerId)
           if (!this.isConnectedTo(peerId)) {
-            this.onConnectionClosed(peerId, conn.id)
+            this.onConnectionChanged(peerId, 'established')
           }
           break
         default:
@@ -330,7 +304,7 @@ export class Mesh {
     })
     instance.addEventListener('datachannel', (event) => {
       this.debugWebRtc(`Got data channel from ${peerId}`)
-      this.registerDc(conn, event.channel, peerId, false)
+      this.registerDc(conn, event.channel, peerId)
     })
 
     try {
@@ -350,7 +324,7 @@ export class Mesh {
     }
   }
 
-  private async onAnswerListener(sender: PeerId, body: Uint8Array) {
+  async onAnswerListener(sender: PeerId, body: Uint8Array) {
     if (this.disposed) return
     this.debugWebRtc(`Got answer message from ${sender}`)
     const conn = this.initiatedConnections.get(sender)
@@ -373,20 +347,20 @@ export class Mesh {
     }
   }
 
-  private registerDc(conn: Connection, dc: RTCDataChannel, peerId: PeerId, initiatedByUs: boolean) {
+  private registerDc(conn: Connection, dc: RTCDataChannel, peerId: PeerId) {
     dc.binaryType = 'arraybuffer'
     dc.addEventListener('open', () => {
       conn.dc = dc
-      this.onConnectionEstablished(peerId, conn.id)
+      this.onConnectionChanged(peerId, 'established')
     })
     dc.addEventListener('closing', () => {
       if (!this.isConnectedTo(peerId)) {
-        this.onConnectionClosed(peerId, conn.id)
+        this.onConnectionChanged(peerId, 'closed')
       }
     })
     dc.addEventListener('close', () => {
       if (!this.isConnectedTo(peerId)) {
-        this.onConnectionClosed(peerId, conn.id)
+        this.onConnectionChanged(peerId, 'closed')
       }
     })
     dc.addEventListener('message', async (event) => {

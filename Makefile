@@ -1,7 +1,9 @@
 install:
+	cd lib; npm ci
 	cd server; npm ci
-	cd p2p; npm ci
+	cd simulation; npm ci
 
 build:
+	cd lib; make build
 	cd server; make build
-	cd p2p; make build
+	cd simulation; make build

@@ -2,8 +2,8 @@ import { Writer } from 'protobufjs/minimal'
 import { Emitter } from 'mitt'
 import mitt from 'mitt'
 import { PeerId } from './types'
-import { MessageEvent, WebSocket } from 'ws'
 import { ClientMessage, ServerMessage } from './proto/server.gen'
+import { craftUpdateMessage } from './utils'
 
 const writer = new Writer()
 
@@ -24,9 +24,17 @@ export type ServerConnection = {
   events: Emitter<MessagingEvents>
   subscribe: (topic: string, handler: Handler) => void
   publish: (topics: string[], payload: Uint8Array) => void
+  publishConnectionEstablishedChange: (target: PeerId) => void
+  publishConnectionClosedChange: (target: PeerId) => void
+  publishConnectionStatus: (meshStatusIndex: number, connectedTo: PeerId[]) => void
 }
 
-export function createServerConnection(url: string): Promise<ServerConnection> {
+export type ServerConfig = {
+  url: string
+  prefix: string
+}
+
+export function createServerConnection({ url, prefix }: ServerConfig): Promise<ServerConnection> {
   const events = mitt<MessagingEvents>()
   const subscriptions = new Map<string, Handler>()
   let id: number | undefined = undefined
@@ -35,14 +43,15 @@ export function createServerConnection(url: string): Promise<ServerConnection> {
       let ws = new WebSocket(url)
       ws.binaryType = 'arraybuffer'
       ws.addEventListener('close', (event) => {
-        console.log(id, event.code, event.reason, event.target, event.type, event.wasClean)
+        console.log(`[${id}] socked closed, code: ${event.code}`)
         events.emit('DISCONNECTION', {})
       })
       ws.addEventListener('error', (err: any) => {
         console.error(id, err)
       })
 
-      function subscribe(topic: string, handler: Handler) {
+      function subscribe(t: string, handler: Handler) {
+        const topic = `${prefix}.${t}`
         subscriptions.set(topic, handler)
         ws.send(
           craftMessage({
@@ -54,7 +63,8 @@ export function createServerConnection(url: string): Promise<ServerConnection> {
         )
       }
 
-      function publish(topics: string[], payload: Uint8Array) {
+      function publish(ts: string[], payload: Uint8Array) {
+        const topics = ts.map((t) => `${prefix}.${t}`)
         ws.send(
           craftMessage({
             message: {
@@ -65,7 +75,49 @@ export function createServerConnection(url: string): Promise<ServerConnection> {
         )
       }
 
-      ws.addEventListener('message', (event: MessageEvent) => {
+      function publishConnectionEstablishedChange(target: PeerId) {
+        publish(
+          ['mesh'],
+          craftUpdateMessage({
+            source: id!,
+            data: {
+              $case: 'connectedTo',
+              connectedTo: target
+            }
+          })
+        )
+      }
+
+      function publishConnectionClosedChange(target: PeerId) {
+        publish(
+          ['mesh'],
+          craftUpdateMessage({
+            source: id!,
+            data: {
+              $case: 'disconnectedFrom',
+              disconnectedFrom: target
+            }
+          })
+        )
+      }
+
+      function publishConnectionStatus(meshStatusIndex: number, connectedTo: PeerId[]) {
+        publish(
+          ['mesh'],
+          craftUpdateMessage({
+            source: id!,
+            data: {
+              $case: 'status',
+              status: {
+                id: meshStatusIndex,
+                connectedTo
+              }
+            }
+          })
+        )
+      }
+
+      ws.addEventListener('message', (event) => {
         const payload = new Uint8Array(event.data as any)
         const { message } = ServerMessage.decode(payload)
         if (!message) {
@@ -78,7 +130,10 @@ export function createServerConnection(url: string): Promise<ServerConnection> {
               events,
               subscribe,
               publish,
-              id
+              id,
+              publishConnectionEstablishedChange,
+              publishConnectionClosedChange,
+              publishConnectionStatus
             })
             break
           }

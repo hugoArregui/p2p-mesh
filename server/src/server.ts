@@ -1,9 +1,15 @@
 import * as uWS from 'uWebSockets.js'
-import { GlobalContext, WebSocket } from '../types'
 import { Writer } from 'protobufjs/minimal'
-import { ServerMessage, ClientMessage } from '../proto/server.gen'
+import { ServerMessage, ClientMessage } from './proto/server.gen'
 
 const VERBOSE = false
+
+const logger = console
+const port = 6000
+
+export type WebSocket = uWS.WebSocket & {
+  id: number
+}
 
 // we use a shared writer to reduce allocations and leverage its allocation pool
 const writer = new Writer()
@@ -14,26 +20,18 @@ export function craftMessage(packet: ServerMessage): Uint8Array {
   return writer.finish()
 }
 
-export async function setupRouter({ app, components }: GlobalContext): Promise<void> {
-  const { logs, metrics, config } = components
-  const logger = logs.getLogger('server')
-
-  const commitHash = await config.getString('COMMIT_HASH')
-  const status = JSON.stringify({ commitHash })
-
+export async function start(): Promise<void> {
   let connectionIndex = 1
+  const app = uWS.App({})
   app
-    .get('/status', async (res) => {
-      res.end(status)
-    })
-    .get('/metrics', async (res) => {
-      const body = await (metrics as any).registry.metrics()
-      res.end(body)
-    })
+    // .get('/metrics', async (res) => {
+    //   const body = await (metrics as any).registry.metrics()
+    //   res.end(body)
+    // })
     .ws('/service', {
       compression: uWS.DISABLED,
       open: (_ws) => {
-        components.metrics.increment('server_connections', {})
+        // metrics.increment('server_connections', {})
         const ws = _ws as any as WebSocket
         ws.id = connectionIndex++
         const welcomeMessage = craftMessage({
@@ -51,7 +49,7 @@ export async function setupRouter({ app, components }: GlobalContext): Promise<v
         logger.debug(`Welcome sent`, { id: ws.id })
       },
       drain: (ws) => {
-        components.metrics.observe('server_ws_buffered_amount', { id: ws.id }, ws.getBufferedAmount())
+        // metrics.observe('server_ws_buffered_amount', { id: ws.id }, ws.getBufferedAmount())
       },
       message: (_ws, data, isBinary) => {
         if (!isBinary) {
@@ -61,8 +59,8 @@ export async function setupRouter({ app, components }: GlobalContext): Promise<v
 
         const ws = _ws as any as WebSocket
 
-        metrics.increment('server_in_messages', {})
-        metrics.increment('server_in_bytes', {}, data.byteLength)
+        // metrics.increment('server_in_messages', {})
+        // metrics.increment('server_in_bytes', {}, data.byteLength)
 
         const { message } = ClientMessage.decode(Buffer.from(data))
         if (!message) {
@@ -91,8 +89,8 @@ export async function setupRouter({ app, components }: GlobalContext): Promise<v
               })
 
               const n = app.numSubscribers(topic)
-              metrics.increment('server_out_messages', {}, n)
-              metrics.increment('server_out_bytes', {}, subscriptionMessage.byteLength * n)
+              // metrics.increment('server_out_messages', {}, n)
+              // metrics.increment('server_out_bytes', {}, subscriptionMessage.byteLength * n)
               app.publish(topic, subscriptionMessage, true)
             }
             break
@@ -115,7 +113,16 @@ export async function setupRouter({ app, components }: GlobalContext): Promise<v
       },
       close: (_ws) => {
         logger.log('WS closed')
-        components.metrics.decrement('server_connections', {})
+        // metrics.decrement('server_connections', {})
+      }
+    })
+    .listen(port, (token) => {
+      if (token) {
+        logger.log('Listening to port ' + port)
+      } else {
+        logger.log('Failed to listen to port ' + port)
       }
     })
 }
+
+start().catch(logger.error)

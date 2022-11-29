@@ -32,7 +32,7 @@ async function start() {
         trace = `<li> Trace: ${client.trace} </li>`
       }
       body += `
-<li>${client.id}
+<li>${client.id} (prefix: ${client.prefix})
   <ul>
     <li>Ping: ${client.ping}</li>
 ${trace}
@@ -40,8 +40,7 @@ ${trace}
 <a href="${url}/matrix">Adjacency Matrix</a> / 
 <a href="/view-graph?clientId=${client.id}&workerIndex=${i}">Graph</a> / 
 <a href="${url}/connections">Connections</a> /
-<a href="${url}/trace">Send trace</a> / 
-<a href="${url}/performance-trackers">Performance trackers</a>
+<a href="${url}/trace">Send trace</a>
     </li>
   </ul>
 </li>

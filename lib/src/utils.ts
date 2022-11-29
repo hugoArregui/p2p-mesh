@@ -1,5 +1,21 @@
-import { Edge } from './proto/p2p.gen'
+import { Edge, MeshUpdateMessage, Packet } from './proto/p2p.gen'
 import { PeerId } from './types'
+import { Writer } from 'protobufjs/minimal'
+
+// shared writer to leverage pools
+const writer = new Writer()
+
+export function craftMessage(packet: Packet): Uint8Array {
+  writer.reset()
+  Packet.encode(packet as any, writer)
+  return writer.finish()
+}
+
+export function craftUpdateMessage(update: MeshUpdateMessage): Uint8Array {
+  writer.reset()
+  MeshUpdateMessage.encode(update as any, writer)
+  return writer.finish()
+}
 
 export function between(min: number, max: number) {
   return Math.floor(Math.random() * (max - min) + min)

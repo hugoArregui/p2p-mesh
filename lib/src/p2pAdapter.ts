@@ -1,18 +1,13 @@
 import mitt from 'mitt'
-
-import { ILogger, PeerId } from './types'
-import { Writer } from 'protobufjs/minimal'
+import { defaultIceServers, ILogger, MESH_UPDATE_FREQ, PeerId, UPDATE_NETWORK_INTERVAL } from './types'
 import { Mesh } from './mesh'
-import { CommsAdapterEvents, SendHints } from './types'
+import { CommsAdapterEvents } from './types'
 import { createConnectionsGraph, Graph } from './graph'
-import { createPerformanceRegistry } from './performance'
 import { MeshUpdateMessage, Packet } from './proto/p2p.gen'
 import { ServerConnection } from './serverConnection'
-import { nextSteps, pickRandom } from './utils'
+import { craftMessage, nextSteps, pickRandom } from './utils'
 
-const MESH_UPDATE_FREQ = 60 * 1000
 const DEBUG_SEND_FAILURE = false
-const DEBUG_MESH = true
 const DEBUG_UPDATE_NETWORK = false
 
 export type KnownPeerData = {
@@ -20,106 +15,54 @@ export type KnownPeerData = {
   lastMeshUpdate?: number
 }
 
-const UPDATE_NETWORK_INTERVAL = 30000
-const DEFAULT_TARGET_CONNECTIONS = 4
-const DEFAULT_MAX_CONNECTIONS = 6
-
-// shared writer to leverage pools
-const writer = new Writer()
-
-function craftMessage(packet: Packet): Uint8Array {
-  writer.reset()
-  Packet.encode(packet as any, writer)
-  return writer.finish()
-}
-
-function craftUpdateMessage(update: MeshUpdateMessage): Uint8Array {
-  writer.reset()
-  MeshUpdateMessage.encode(update as any, writer)
-  return writer.finish()
+export type P2PConfig = {
+  maxPeers: number
+  targetConnections: number
+  maxConnections: number
+  iceServers?: RTCIceServer[]
 }
 
 export class PeerToPeerAdapter {
   public readonly mesh: Mesh
   public readonly events = mitt<CommsAdapterEvents>()
-  public knownPeers = new Map<PeerId, KnownPeerData>()
+  public readonly knownPeers = new Map<PeerId, KnownPeerData>()
+  public readonly graph: Graph
 
+  private peerId: PeerId
   private updatingNetwork: boolean = false
   private updateNetworkTimeoutId: ReturnType<typeof setTimeout> | null = null
   private shareMeshInterval: ReturnType<typeof setInterval> | null = null
   private disposed: boolean = false
-
-  private listeners: { close(): void }[] = []
-  private peerId: PeerId
-
   private meshStatusIndex = 0
-  public performanceRegistry = createPerformanceRegistry()
+  private maxConnections: number
+  private targetConnections: number
 
-  public graph: Graph
-
-  constructor(private serverConn: ServerConnection, private logger: ILogger) {
+  constructor(private logger: ILogger, private serverConn: ServerConnection, config: P2PConfig) {
     this.peerId = serverConn.id
-    this.graph = createConnectionsGraph(this.performanceRegistry, this.peerId)
+    this.graph = createConnectionsGraph(this.peerId, config.maxPeers)
+    this.maxConnections = config.maxConnections
+    this.targetConnections = config.targetConnections
 
-    this.mesh = new Mesh(this.serverConn, this.peerId, {
-      logger: this.logger,
-      packetHandler: this.handlePeerPacket.bind(this),
-      shouldAcceptOffer: (peerId: PeerId) => {
-        if (this.disposed) {
-          return false
-        }
-
-        if (this.mesh.connectionsCount() >= DEFAULT_MAX_CONNECTIONS) {
-          if (DEBUG_MESH) {
-            this.logger.log('Rejecting offer, already enough connections')
-          }
-          return false
-        }
-
-        return true
-      },
-      onConnectionEstablished: (peerId: PeerId) => {
+    this.mesh = new Mesh(
+      this.logger,
+      this.serverConn,
+      this.peerId,
+      this.handlePeerPacket.bind(this),
+      (peerId: PeerId, change) => {
         this.meshStatusIndex++
-
-        const tracker = this.performanceRegistry.getProcessPerformanceTracker('onConnectionEstablished:addConnection')
-        tracker.startTimer()
-        this.graph.addConnection(this.peerId, peerId)
-        tracker.stopTimer()
-
-        this.sendMeshUpdate({
-          source: this.peerId,
-          data: {
-            $case: 'connectedTo',
-            connectedTo: peerId
-          }
-        })
-      },
-      onConnectionClosed: (peerId: PeerId) => {
-        this.meshStatusIndex++
-        const tracker = this.performanceRegistry.getProcessPerformanceTracker('onConnectionClosed:removeConnection')
-        tracker.startTimer()
-        this.graph.removeConnection(this.peerId, peerId)
-        tracker.stopTimer()
-        this.sendMeshUpdate({
-          source: this.peerId,
-          data: {
-            $case: 'disconnectedFrom',
-            disconnectedFrom: peerId
-          }
-        })
-      }
-    })
-
-    this.sendMeshUpdate({
-      source: this.peerId,
-      data: {
-        $case: 'status',
-        status: {
-          id: this.meshStatusIndex,
-          connectedTo: this.mesh.connectedPeerIds()
+        if (change === 'established') {
+          this.graph.addConnection(this.peerId, peerId)
+          this.serverConn.publishConnectionEstablishedChange(peerId)
+        } else {
+          this.graph.removeConnection(this.peerId, peerId)
+          this.serverConn.publishConnectionClosedChange(peerId)
         }
-      }
-    })
+      },
+      config.iceServers ?? defaultIceServers,
+      config.maxConnections
+    )
+
+    this.serverConn.publishConnectionStatus(this.meshStatusIndex, this.mesh.connectedPeerIds())
 
     this.scheduleUpdateNetwork()
 
@@ -127,16 +70,8 @@ export class PeerToPeerAdapter {
       if (this.disposed) {
         return
       }
-      this.sendMeshUpdate({
-        source: this.peerId,
-        data: {
-          $case: 'status',
-          status: {
-            id: this.meshStatusIndex,
-            connectedTo: this.mesh.connectedPeerIds()
-          }
-        }
-      })
+
+      this.serverConn.publishConnectionStatus(this.meshStatusIndex, this.mesh.connectedPeerIds())
     }, MESH_UPDATE_FREQ)
   }
 
@@ -155,19 +90,13 @@ export class PeerToPeerAdapter {
     switch (data?.$case) {
       case 'disconnectedFrom': {
         if (data.disconnectedFrom !== this.peerId) {
-          const tracker = this.performanceRegistry.getProcessPerformanceTracker('onMeshChanged:removeConnection')
-          tracker.startTimer()
           this.graph.removeConnection(source, data.disconnectedFrom)
-          tracker.stopTimer()
         }
         break
       }
       case 'connectedTo': {
         if (data.connectedTo !== this.peerId) {
-          const tracker = this.performanceRegistry.getProcessPerformanceTracker('onMeshChanged:addConnection')
-          tracker.startTimer()
           this.graph.addConnection(source, data.connectedTo)
-          tracker.stopTimer()
         }
         break
       }
@@ -176,8 +105,6 @@ export class PeerToPeerAdapter {
           return
         }
 
-        const tracker = this.performanceRegistry.getProcessPerformanceTracker('onMeshChanged:status')
-        tracker.startTimer()
         for (const p of this.knownPeers.keys()) {
           if (p === this.peerId) {
             continue
@@ -188,7 +115,6 @@ export class PeerToPeerAdapter {
             this.graph.removeConnection(source, p)
           }
         }
-        tracker.stopTimer()
         sourceData.lastMeshUpdate = data.status.id
         break
       }
@@ -207,6 +133,9 @@ export class PeerToPeerAdapter {
     // TODO: close subscriptions upon disconnection
     this.serverConn.subscribe(`mesh`, this.onMeshChanged.bind(this))
     this.serverConn.subscribe(`${this.peerId}.fallback`, this.onFallback.bind(this))
+    this.serverConn.subscribe(`${this.peerId}.candidate`, this.mesh.onCandidateMessage.bind(this.mesh))
+    this.serverConn.subscribe(`${this.peerId}.offer`, this.mesh.onOfferMessage.bind(this.mesh))
+    this.serverConn.subscribe(`${this.peerId}.answer`, this.mesh.onAnswerListener.bind(this.mesh))
 
     this.triggerUpdateNetwork('start')
   }
@@ -223,16 +152,12 @@ export class PeerToPeerAdapter {
       clearInterval(this.shareMeshInterval)
     }
 
-    for (const listener of this.listeners) {
-      listener.close()
-    }
-
     this.knownPeers.clear()
     await this.mesh.dispose()
     this.events.emit('DISCONNECTION', {})
   }
 
-  async send(payload: Uint8Array, { reliable }: SendHints): Promise<void> {
+  async send(payload: Uint8Array): Promise<void> {
     if (this.disposed) {
       return
     }
@@ -247,7 +172,7 @@ export class PeerToPeerAdapter {
     const peersToSend: Set<PeerId> = nextSteps(edges, this.peerId)
 
     for (const neighbor of peersToSend) {
-      if (!this.mesh.sendPacketToPeer(neighbor, packet, reliable)) {
+      if (!this.mesh.sendPacketToPeer(neighbor, packet)) {
         this.logger.warn(
           `cannot send package to ${neighbor}, ${this.mesh.isConnectedTo(neighbor)} ${this.graph.isConnectedTo(
             neighbor
@@ -267,7 +192,7 @@ export class PeerToPeerAdapter {
     }
   }
 
-  private async handlePeerPacket(data: Uint8Array, reliable: boolean) {
+  private async handlePeerPacket(data: Uint8Array) {
     if (this.disposed) return
 
     const packet = Packet.decode(data)
@@ -279,7 +204,7 @@ export class PeerToPeerAdapter {
 
     const peersToSend: Set<PeerId> = nextSteps(packet.edges, this.peerId)
     for (const neighbor of peersToSend) {
-      if (!this.mesh.sendPacketToPeer(neighbor, data, reliable) && DEBUG_SEND_FAILURE) {
+      if (!this.mesh.sendPacketToPeer(neighbor, data) && DEBUG_SEND_FAILURE) {
         this.logger.warn(
           `cannot relay package to ${neighbor}. ${this.mesh.isConnectedTo(neighbor)} - ${this.graph.isConnectedTo(
             neighbor
@@ -323,8 +248,8 @@ export class PeerToPeerAdapter {
       this.mesh.checkConnectionsSanity()
 
       const neededConnections = Math.min(
-        DEFAULT_TARGET_CONNECTIONS - this.mesh.connectedCount(),
-        DEFAULT_MAX_CONNECTIONS - this.mesh.connectionsCount()
+        this.targetConnections - this.mesh.connectedCount(),
+        this.maxConnections - this.mesh.connectionsCount()
       )
       // If we need to establish new connections because we are below the target, we do that
       if (neededConnections > 0) {
@@ -350,7 +275,7 @@ export class PeerToPeerAdapter {
       }
 
       // If we are over the max amount of connections, we discard some
-      const toDisconnect = this.mesh.connectedCount() - DEFAULT_MAX_CONNECTIONS
+      const toDisconnect = this.mesh.connectedCount() - this.maxConnections
       if (toDisconnect > 0) {
         if (DEBUG_UPDATE_NETWORK) {
           this.logger.log(
@@ -360,18 +285,10 @@ export class PeerToPeerAdapter {
         Array.from(this.knownPeers.values())
           .filter((peer) => this.mesh.isConnectedTo(peer.id))
           .slice(0, toDisconnect)
-          .forEach((peer) => this.disconnectFrom(peer.id))
+          .forEach((peer) => this.mesh.disconnectFrom(peer.id))
       }
     } finally {
       this.updatingNetwork = false
     }
-  }
-
-  private disconnectFrom(peerId: PeerId) {
-    this.mesh.disconnectFrom(peerId)
-  }
-
-  private sendMeshUpdate(update: MeshUpdateMessage) {
-    this.serverConn.publish([`mesh`], craftUpdateMessage(update))
   }
 }

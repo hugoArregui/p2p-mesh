@@ -1,4 +1,3 @@
-import { PerformanceRegistry } from './performance'
 import { Edge } from './proto/p2p.gen'
 import { PeerId } from './types'
 
@@ -14,11 +13,7 @@ export type Graph = {
   asMatrixHTMLTable: () => string
 }
 
-export function createConnectionsGraph(
-  performanceRegistry: PerformanceRegistry,
-  peerId: PeerId,
-  maxPeers: number = 100
-): Graph {
+export function createConnectionsGraph(peerId: PeerId, maxPeers: number): Graph {
   const peers: PeerId[] = [peerId]
   const matrix = new Uint8Array(maxPeers * maxPeers)
   matrix.fill(0)
@@ -123,8 +118,6 @@ export function createConnectionsGraph(
 
   // primMST
   function calculate() {
-    const tracker = performanceRegistry.getProcessPerformanceTracker('graph:calculate')
-    tracker.startTimer()
     // A utility function to find the vertex with
     // minimum key value, from the set of vertices
     // not yet included in MST
@@ -198,8 +191,6 @@ export function createConnectionsGraph(
       }
     }
     mst = mstEdges
-
-    tracker.stopTimer()
   }
 
   function asDot(nodesToPaint: PeerId[]): string {
@@ -257,6 +248,11 @@ export function createConnectionsGraph(
 <html>
 <head>
 <style>
+th, td {
+  width: 20px;
+  text-align: right;
+}
+
 table, th, td {
   border: 1px solid black;
   border-collapse: collapse;

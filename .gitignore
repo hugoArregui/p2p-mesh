@@ -1,9 +1,10 @@
-server/node_modules
-server/dist
+**/node_modules
+**/dist
+
+lib/src/proto
+
 server/src/proto
 server/.env
 
-p2p/node_modules
-p2p/dist
-p2p/src/proto
-p2p/.env
+simulation/src/proto
+simulation/.env

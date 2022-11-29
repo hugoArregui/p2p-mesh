@@ -1,9 +1,8 @@
 import express from 'express'
 import cors from 'cors'
 import { RTCPeerConnection } from 'wrtc'
-import { PeerToPeerAdapter } from './p2pAdapter'
-import { PeerId, PingRequest } from './types'
-import { createServerConnection } from './serverConnection'
+import { PeerToPeerAdapter, PeerId, createServerConnection } from 'p2p-mesh-lib'
+import { PingRequest } from './types'
 import { between, decode, encode } from './utils'
 
 require('browser-env')() // eslint-disable-line @typescript-eslint/no-var-requires
@@ -15,7 +14,11 @@ async function start() {
   app.use(express.json())
   app.use(cors())
 
-  const conn = await createServerConnection(process.env.SERVER_URL || 'ws://localhost:6000/service')
+  const prefix = process.env.GROUP || 'default'
+  const conn = await createServerConnection({
+    url: process.env.SERVER_URL || 'ws://localhost:6000/service',
+    prefix
+  })
 
   const formatLogMessage = (message: string | Error) => {
     return `${conn.id}: ${message}`
@@ -39,7 +42,11 @@ async function start() {
     }
   }
 
-  const adapter = new PeerToPeerAdapter(conn, logger)
+  const adapter = new PeerToPeerAdapter(logger, conn, {
+    maxPeers: 100,
+    targetConnections: 4,
+    maxConnections: 6
+  })
   adapter.connect()
 
   const pingRequests = new Map<number, PingRequest>()
@@ -50,7 +57,7 @@ async function start() {
 
   function sendTrace() {
     trace = `${conn.id}:${Math.floor(Math.random() * 0xffffffff)}`
-    adapter.send(encode(`trace ${trace}`), { reliable: true })
+    adapter.send(encode(`trace ${trace}`))
     return trace
   }
 
@@ -75,7 +82,7 @@ async function start() {
         return
       }
       answeredPings.add(nonce)
-      adapter.send(encode(`pong ${nonce} ${conn.id}`), { reliable: true })
+      adapter.send(encode(`pong ${nonce} ${conn.id}`))
     } else if (message.startsWith('trace')) {
       const [_, id] = message.split(' ')
       trace = id
@@ -100,18 +107,14 @@ async function start() {
         logger.log(message)
         ping = message
       }, 30 * 1000)
-      adapter.send(encode(`ping ${nonce}`), { reliable: true })
+      adapter.send(encode(`ping ${nonce}`))
     } catch (err: any) {
       logger.error('Error sending ping message', err)
     }
   }, 1000 * 60 * between(1, 5))
 
   app.get('/info', (_req, res) => {
-    res.json({ id: conn.id, ping, trace })
-  })
-
-  app.get('/performance-trackers', (_req, res) => {
-    res.json(adapter.performanceRegistry.asObject())
+    res.json({ id: conn.id, ping, trace, prefix })
   })
 
   app.get('/trace', (_req, res) => {

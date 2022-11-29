@@ -9,4 +9,11 @@ do
   PORT=$PORT node --trace-warnings --abort-on-uncaught-exception --unhandled-rejections=strict dist/client.js &
 done
 
+for i in {12..15}
+do
+  PORT=$((2000+$i))
+  WORKERS="http://localhost:$PORT,$WORKERS"
+  PORT=$PORT GROUP="group2" node --trace-warnings --abort-on-uncaught-exception --unhandled-rejections=strict dist/client.js &
+done
+
 WORKERS=$WORKERS node --trace-warnings --abort-on-uncaught-exception --unhandled-rejections=strict dist/observer.js 

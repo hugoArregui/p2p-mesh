@@ -1,0 +1,42 @@
+{
+  "name": "p2p-mesh-lib",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "typings": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "Apache-2.0",
+  "prettier": {
+    "printWidth": 120,
+    "semi": false,
+    "singleQuote": true,
+    "trailingComma": "none",
+    "tabWidth": 2
+  },
+  "devDependencies": {
+    "@types/jest": "^27.0.1",
+    "jest": "^27.0.6",
+    "prettier": "^2.8.0",
+    "ts-jest": "^27.0.5",
+    "typescript": "^4.3.5"
+  },
+  "dependencies": {
+    "@protobuf-ts/protoc": "^2.8.1",
+    "mitt": "^3.0.0",
+    "node-fetch": "^2.6.7",
+    "ts-proto": "^1.126.1",
+    "ts-protoc-gen": "^0.15.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "config": {
+    "protocVersion": "21.6"
+  },
+  "optionalDependencies": {
+    "bufferutil": "^4.0.7"
+  }
+}
