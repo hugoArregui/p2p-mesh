@@ -37,7 +37,7 @@ open localhost:8000 in your browser, there every client will have a link to see 
 
 ![Graph](/docs/graph.svg)
 
-Showing a picture of how peers are connected, and mark in red, the MST paths.
+Showing a picture of how peers are connected and, marked in red, the MST paths.
 
 # Open questions
 
