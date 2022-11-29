@@ -3,7 +3,7 @@ This project is a PoC for building a P2P mesh with focus in the browser, using w
 The concept is simple:
 
 - Extend the use of a webrtc signaling server in order to perform peer discovery and mesh status updates.
-- Peers will discover each other using the mesh status updates, and will connect randomly to each other. Using the mesh knowledge they obtain from the updates, each peer will maintain a view of the mesh in the form of an adjacency matrix. To broadcast a message, peers will take the graph described by the adjacency and calculate the minimum spanning tree (MST) using Prism Algorithm (that is: a tree starting from the current peer and describing the path to every other peer in the mesh, reaching every other peer only once). Then, a package will be send using the path described by the MST, including both the payload and the route to follow. The peers receiving the message will relay the message, if necessary, according to the packet's own rules.
+- Peers will discover each other using the mesh status updates, and will connect randomly to each other. Using the mesh knowledge they obtain from the updates, each peer will maintain a view of the mesh in the form of an adjacency matrix. To broadcast a message, peers will take the graph described by the adjacency matrix and calculate the minimum spanning tree (MST) using Prism Algorithm (that is: a tree starting from the current peer and describing the path to every other peer in the mesh, reaching every other peer only once). Then, a package will be sent using the path described by the MST, including both the payload and the route to follow. The peers receiving the message will relay the message, if necessary, according to the packet's own rules.
 
 
 # Project structure
