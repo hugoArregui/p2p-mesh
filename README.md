@@ -1,4 +1,4 @@
-This project is a PoC for building a P2P mesh with focus in the browser, using webrtc connections. Authors: @agusaldasoro @hugoArregui
+This project is a PoC for building a P2P mesh with focus in the browser, using webrtc connections. Authors: [@agusaldasoro](https://github.com/agusaldasoro) [@hugoArregui](https://github.com/hugoArregui)
 
 The concept is simple:
 
