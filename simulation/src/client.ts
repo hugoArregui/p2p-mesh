@@ -3,7 +3,7 @@ import cors from 'cors'
 import { RTCPeerConnection } from 'wrtc'
 import { PeerToPeerAdapter, PeerId, createServerConnection } from 'p2p-mesh-lib'
 import { PingRequest } from './types'
-import { between, decode, encode } from './utils'
+import { asDot, asMatrixHTMLTable, between, decode, encode } from './utils'
 
 require('browser-env')() // eslint-disable-line @typescript-eslint/no-var-requires
 require('dotenv').config() // eslint-disable-line @typescript-eslint/no-var-requires
@@ -45,7 +45,9 @@ async function start() {
   const adapter = new PeerToPeerAdapter(logger, conn, {
     maxPeers: 100,
     targetConnections: 4,
-    maxConnections: 6
+    maxConnections: 6,
+    publishStatusIntervalMs: 60 * 1000,
+    fallbackEnabled: false
   })
   adapter.connect()
 
@@ -123,18 +125,18 @@ async function start() {
   })
 
   app.get('/graph', (_req, res) => {
-    res.write(adapter.graph.asDot([]))
+    res.write(asDot(adapter.graph, []))
     res.end()
   })
 
   app.post('/view-trace', (req, res) => {
     const nodesToPaint = req.body.nodesToPaint
-    res.write(adapter.graph.asDot(nodesToPaint))
+    res.write(asDot(adapter.graph, nodesToPaint))
     res.end()
   })
 
   app.get('/matrix', (_req, res) => {
-    res.write(adapter.graph.asMatrixHTMLTable())
+    res.write(asMatrixHTMLTable(adapter.graph))
     res.end()
   })
 

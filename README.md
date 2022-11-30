@@ -39,6 +39,18 @@ open localhost:8000 in your browser, there every client will have a link to see 
 
 Showing a picture of how peers are connected and, marked in red, the MST paths.
 
+# See it on action: chat example
+
+The server must be runnning for this example, most browsers will prevent a websocket connection to localhost, so you may need to deploy the server somewhere or use a tool like [ngrok](https://ngrok.com/)
+
+```
+cd chat
+npm ci
+make start
+```
+
+This example has been tested in Chrome.
+
 # Open questions
 
 - Security: the server will share the mesh updates, so the server must be trusted to relay the information in a reliable way. Otherwise the security must be built-in using in the application protocol, by using encryption for example.

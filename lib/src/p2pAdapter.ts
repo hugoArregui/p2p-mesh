@@ -1,5 +1,5 @@
 import mitt from 'mitt'
-import { defaultIceServers, ILogger, MESH_UPDATE_FREQ, PeerId, UPDATE_NETWORK_INTERVAL } from './types'
+import { defaultIceServers, ILogger, PeerId, UPDATE_NETWORK_INTERVAL } from './types'
 import { Mesh } from './mesh'
 import { CommsAdapterEvents } from './types'
 import { createConnectionsGraph, Graph } from './graph'
@@ -20,6 +20,8 @@ export type P2PConfig = {
   targetConnections: number
   maxConnections: number
   iceServers?: RTCIceServer[]
+  fallbackEnabled: boolean
+  publishStatusIntervalMs: number
 }
 
 export class PeerToPeerAdapter {
@@ -36,12 +38,17 @@ export class PeerToPeerAdapter {
   private meshStatusIndex = 0
   private maxConnections: number
   private targetConnections: number
+  private fallbackEnabled: boolean
+
+  private publishStatusIntervalMs: number
 
   constructor(private logger: ILogger, private serverConn: ServerConnection, config: P2PConfig) {
     this.peerId = serverConn.id
     this.graph = createConnectionsGraph(this.peerId, config.maxPeers)
     this.maxConnections = config.maxConnections
     this.targetConnections = config.targetConnections
+    this.fallbackEnabled = config.fallbackEnabled
+    this.publishStatusIntervalMs = config.publishStatusIntervalMs
 
     this.mesh = new Mesh(
       this.logger,
@@ -72,7 +79,7 @@ export class PeerToPeerAdapter {
       }
 
       this.serverConn.publishConnectionStatus(this.meshStatusIndex, this.mesh.connectedPeerIds())
-    }, MESH_UPDATE_FREQ)
+    }, this.publishStatusIntervalMs)
   }
 
   private async onMeshChanged(_: PeerId, body: Uint8Array) {
@@ -181,14 +188,16 @@ export class PeerToPeerAdapter {
       }
     }
 
-    const topics = []
-    for (const peerId of this.knownPeers.keys()) {
-      if (!reachablePeers.has(peerId)) {
-        topics.push(`${peerId}.fallback`)
+    if (this.fallbackEnabled) {
+      const topics = []
+      for (const peerId of this.knownPeers.keys()) {
+        if (!reachablePeers.has(peerId)) {
+          topics.push(`${peerId}.fallback`)
+        }
       }
-    }
-    if (topics.length > 0) {
-      this.serverConn.publish(topics, packet)
+      if (topics.length > 0) {
+        this.serverConn.publish(topics, packet)
+      }
     }
   }
 

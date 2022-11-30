@@ -1,4 +1,3 @@
-export const MESH_UPDATE_FREQ = 60 * 1000
 export const UPDATE_NETWORK_INTERVAL = 30000
 export const PEER_CONNECT_TIMEOUT = 3500
 
