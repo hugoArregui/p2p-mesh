@@ -11,6 +11,7 @@ The concept is simple:
 - `lib/`: this is the P2P mesh library that runs in the peer
 - `server/`: the server implementation
 - `simulation/`: this is an example using the P2P mesh library
+- `chat/`: this is a web example using the P2P mesh library
 
 # See it on action: running the simulation
 
