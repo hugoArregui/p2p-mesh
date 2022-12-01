@@ -55,6 +55,6 @@ This example has been tested in Chrome.
 # Open questions
 
 - Security: the server will share the mesh updates, so the server must be trusted to relay the information in a reliable way. Otherwise the security must be built-in using in the application protocol, by using encryption for example.
-- Network partitions: since each peer picks its connections at random, is possible (although very unlikely), to end up in a network partition in which a group of peers are isolated from another group. Since we are able to detect this case, we use the server as a fallback mechanism. Other strategies are possible, like explicitly trying to connect to them, but they are out of the scope of this PoC.
+- Network partitions: since each peer picks its connections at random, is possible (although very unlikely), to end up in a network partition in which a group of peers are isolated from another group. Since we are able to detect this case, we can use the server as a fallback mechanism. Other strategies are possible, like explicitly trying to connect to them, but they are out of the scope of this PoC.
 - Amount of connections: each peer will attempt to connect to the number of `targetConnections`, but will accept `maxConnections`. This values varies according to different use cases, since the browsers will not handle a big number of connections, so it's important to reach a balance between what the browser can handle, and an effective amount. Having more connections means the communication will be faster in the mesh, and the MST will be shorter. 
 
